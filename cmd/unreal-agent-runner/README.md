@@ -61,6 +61,35 @@ For a proxy exposed through `openzoo tunnel`, set `OPENZOO_API_KEY` (or
 `UNREAL_HARNESS_LLM_API_KEY`) to the `oz_…` bearer it prints, and
 `UNREAL_HARNESS_LLM_BASE_URL` to the public `/v1` URL.
 
+#### What OpenZoo retains (read before sending private code)
+
+The zoo is a third party between the runner and the model provider, and its
+discount comes from remembering your data. Concretely:
+
+- **Every prompt and completion transits the zoo's gateway**, then OpenRouter,
+  then the upstream provider. Each hop has its own retention policy; the zoo
+  adds one more party to the chain compared with `openai` or `openrouter`.
+- **Large request bodies are stored server-side.** Bodies above
+  `OPENZOO_CONTEXT_MIN_CHARS` (default 16384 chars) are bound into the zoo's
+  leCore memory under your wallet-signed namespace and recalled on later calls;
+  that is where the ~10× "big body" discount comes from. Uploaded text is
+  authenticated but **not encrypted at rest**, and the zoo publishes no
+  retention window for it.
+- **`npx openzoo contexts --forget` only clears the local manifest**
+  (`~/.openzoo/contexts.json`); it does not delete the server-side context.
+  Set `OPENZOO_NO_CONTEXT_CACHE=1` to never bind bodies (you then pay full
+  price for every call).
+- **Caller headers are forwarded upstream**, including `x-session-id`.
+- **Payments are on public ledgers.** Each call settles as a Solana/Base
+  transfer from your burner wallet, so call timing and spend are public even
+  though prompt content is not.
+- **Locally**, the proxy keeps `~/.openzoo/wallet.json` (your keys) and
+  `~/.openzoo/contexts.json` (corpus hashes → context ids), both chmod 600.
+
+Treat `openzoo` like any other hosted inference vendor with memory enabled:
+fine for benchmarks and public repos, not for code you cannot send to a third
+party.
+
 Run `unreal-agent-runner -h` for options and the JSON request fields.
 
 ## Docker

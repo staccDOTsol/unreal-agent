@@ -69,6 +69,12 @@ Two independent levers to A/B against a direct run of the same tasks:
    passes its measured route table per turn, instead of pinning one frontier model
    for every tool call.
 
+Data retention: every task prompt, tool output and completion transits the zoo's
+gateway before OpenRouter and the provider, and bodies over ~16 KB are stored in
+the zoo's server-side memory with no published retention window (`--forget` only
+clears the local manifest). Terminal-Bench tasks are public, so this is fine for
+the benchmark; see the runner README before using it on private code.
+
 For Terminal-Bench 4.0 on Modal, configure Modal credentials and run:
 
 ```sh
