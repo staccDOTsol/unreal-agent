@@ -1,11 +1,14 @@
 package agentrunner
 
 import (
+	"strings"
+
 	"github.com/unreallabsai/unreal-agent/harness/llm/clients/fireworks"
 	"github.com/unreallabsai/unreal-agent/harness/llm/clients/ollama"
 	"github.com/unreallabsai/unreal-agent/harness/llm/clients/openai"
 	"github.com/unreallabsai/unreal-agent/harness/llm/clients/openaicodex"
 	"github.com/unreallabsai/unreal-agent/harness/llm/clients/openrouter"
+	"github.com/unreallabsai/unreal-agent/harness/llm/clients/openzoo"
 )
 
 func DefaultProviders() []Provider {
@@ -45,6 +48,21 @@ func DefaultProviders() []Provider {
 			APIKeyEnvironment: "OPENROUTER_API_KEY",
 			NewClient: func(apiKey, baseURL string, maxAttempts int, _ func(string) string) (Client, error) {
 				return openrouter.NewClient(openrouter.Config{APIKey: apiKey, BaseURL: baseURL, MaxAttempts: &maxAttempts})
+			},
+		},
+		{
+			// Pay-per-call over x402 through the local `npx openzoo` proxy. No key
+			// is required; OPENZOO_API_KEY (or the shared override) is honored for
+			// tunneled proxies that gate POSTs behind an oz_… bearer.
+			Name:         "openzoo",
+			BaseURL:      openzoo.BaseURL,
+			DefaultModel: openzoo.DefaultModel,
+			NewClient: func(_, baseURL string, maxAttempts int, getenv func(string) string) (Client, error) {
+				apiKey := getenv(llmAPIKeyEnvironment)
+				if strings.TrimSpace(apiKey) == "" {
+					apiKey = getenv("OPENZOO_API_KEY")
+				}
+				return openzoo.NewClient(openzoo.Config{APIKey: apiKey, BaseURL: baseURL, MaxAttempts: &maxAttempts})
 			},
 		},
 		{

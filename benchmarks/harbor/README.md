@@ -42,6 +42,33 @@ TTL and carry the session id, so Anthropic and other explicit-breakpoint upstrea
 cache the growing conversation, keep it on one upstream, and keep it across long
 tool calls and reasoning turns.
 
+### Pay per call through OpenZoo
+
+`openzoo/<model>` routes the run through an [OpenZoo](https://openzoo.fun) proxy,
+paying x402 per call from a burner wallet instead of a provider account. The
+sandbox cannot see `localhost`, so expose the proxy and point the adapter at it:
+
+```sh
+npx openzoo tunnel            # prints https://….trycloudflare.com/v1 and an oz_… bearer
+export OPENZOO_BASE_URL=https://<tunnel>/v1
+export OPENZOO_API_KEY=oz_…   # in tunnel mode the key is real auth
+uv run --project benchmarks/harbor --locked harbor run \
+  -p /absolute/path/to/task \
+  -a harness_harbor.agent:UnrealAgent \
+  -m openzoo/openzoo/auto \
+  --ak bundle="$PWD/bin/harbor/<short-commit>"
+```
+
+Two independent levers to A/B against a direct run of the same tasks:
+
+1. **Rail** — `openai/<model>` vs `openzoo/<model>`: identical model, paid per call
+   with the same `x-session-id` pinning and one-hour `cache_control` the
+   OpenRouter client uses. The proxy's `GET /v1/info` reports `spendUsd` beside
+   `directUsd` for the job.
+2. **Router** — `openzoo/openzoo/auto` lets the zoo pick the cheapest model that
+   passes its measured route table per turn, instead of pinning one frontier model
+   for every tool call.
+
 For Terminal-Bench 4.0 on Modal, configure Modal credentials and run:
 
 ```sh

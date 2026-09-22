@@ -113,6 +113,18 @@ class BundleTests(unittest.TestCase):
                     )
                     self.assertEqual(agent._model, "organization/model")
                     self.assertEqual(agent.model_connection.api_key, "test-key")
+            # OpenZoo pays per call, so it needs a reachable proxy, not a key.
+            agent = UnrealAgent(
+                bundle=temporary,
+                logs_dir=path,
+                model_name="openzoo/openzoo/auto",
+                extra_env={"OPENZOO_BASE_URL": "https://zoo.example/v1"},
+            )
+            self.assertEqual(agent._model, "openzoo/auto")
+            self.assertIsNone(agent.model_connection.api_key)
+            self.assertEqual(
+                agent.model_connection.configured_base_url, "https://zoo.example/v1"
+            )
 
     def test_invalid_model_and_reasoning_fail_before_installation(self):
         for model in ("test", "anthropic/test", "openai/"):

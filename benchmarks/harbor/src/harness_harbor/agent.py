@@ -45,10 +45,11 @@ class UnrealAgent(BaseInstalledAgent):
         if (
             not separator
             or not self._model
-            or self._provider not in {"openai", "openrouter", "fireworks_ai"}
+            or self._provider not in {"openai", "openrouter", "fireworks_ai", "openzoo"}
         ):
             raise ValueError(
-                "Model must use the openai/, openrouter/ or fireworks_ai/ prefix"
+                "Model must use the openai/, openrouter/, fireworks_ai/ or "
+                "openzoo/ prefix"
             )
         # A task may declare MCP servers or a skills directory for agents that use
         # them; this integration exposes Bash and ViewImage, so they are recorded in
@@ -119,7 +120,17 @@ class UnrealAgent(BaseInstalledAgent):
         self, instruction: str, environment: BaseEnvironment, context: AgentContext
     ) -> None:
         connection = self.model_connection
-        if not connection.api_key:
+        # OpenZoo pays per call over x402 instead of authenticating, so a key is
+        # optional; the sandbox cannot reach a localhost proxy, so the operator
+        # must point OPENZOO_BASE_URL at an `openzoo tunnel` URL (and pass its
+        # oz_… bearer through OPENZOO_API_KEY; in tunnel mode the key is real auth).
+        if self._provider == "openzoo":
+            if not connection.configured_base_url:
+                raise ValueError(
+                    "OPENZOO_BASE_URL must point at a proxy reachable from the "
+                    "sandbox, e.g. the /v1 URL printed by `openzoo tunnel`"
+                )
+        elif not connection.api_key:
             raise ValueError(f"No API key configured for {self._provider}")
         logs = self.environment_logs_dir
         request = {
@@ -142,8 +153,13 @@ class UnrealAgent(BaseInstalledAgent):
             "UNREAL_HARNESS_LLM_PROVIDER": (
                 "fireworks" if self._provider == "fireworks_ai" else self._provider
             ),
-            "UNREAL_HARNESS_LLM_API_KEY": connection.api_key,
         }
+        if connection.api_key:
+            env["UNREAL_HARNESS_LLM_API_KEY"] = connection.api_key
+        elif self._provider == "openzoo":
+            resolved = self._resolve_env("OPENZOO_API_KEY")
+            if resolved:
+                env["UNREAL_HARNESS_LLM_API_KEY"] = resolved[1]
         if connection.configured_base_url:
             env["UNREAL_HARNESS_LLM_BASE_URL"] = connection.configured_base_url
         command = (

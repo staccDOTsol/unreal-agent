@@ -66,8 +66,11 @@ func TestRunnerProviderRetries(t *testing.T) {
 func TestRunnerProviderDefaultModels(t *testing.T) {
 	for _, provider := range DefaultProviders() {
 		want := ""
-		if provider.Name == "openai" {
+		switch provider.Name {
+		case "openai":
 			want = "gpt-6-astra"
+		case "openzoo":
+			want = "openzoo/auto"
 		}
 		if provider.DefaultModel != want {
 			t.Errorf("%s default model = %q, want %q", provider.Name, provider.DefaultModel, want)
