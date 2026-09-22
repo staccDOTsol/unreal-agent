@@ -64,21 +64,27 @@ For a proxy exposed through `openzoo tunnel`, set `OPENZOO_API_KEY` (or
 #### What OpenZoo retains (read before sending private code)
 
 The zoo is a third party between the runner and the model provider, and its
-discount comes from remembering your data. Concretely:
+discount comes from routing and from remembering large bodies. Concretely:
 
-- **Every prompt and completion transits the zoo's gateway**, then OpenRouter,
-  then the upstream provider. Each hop has its own retention policy; the zoo
-  adds one more party to the chain compared with `openai` or `openrouter`.
-- **Large request bodies are stored server-side.** Bodies above
-  `OPENZOO_CONTEXT_MIN_CHARS` (default 16384 chars) are bound into the zoo's
-  leCore memory under your wallet-signed namespace and recalled on later calls;
-  that is where the ~10× "big body" discount comes from. Uploaded text is
-  authenticated but **not encrypted at rest**, and the zoo publishes no
-  retention window for it.
-- **`npx openzoo contexts --forget` only clears the local manifest**
-  (`~/.openzoo/contexts.json`); it does not delete the server-side context.
-  Set `OPENZOO_NO_CONTEXT_CACHE=1` to never bind bodies (you then pay full
-  price for every call).
+- **Every prompt and completion transits the zoo's gateway, then an x402
+  "door"** — a pay-per-call endpoint the zoo selects per request from its
+  pool (`x402.aispace.bot`, `surplusintelligence.ai`, the x402 Bazaar). The
+  door forwards to the model provider. Retention of the prompt at the door is
+  the door operator's policy, not OpenAI's; the zoo adds one more party to the
+  chain compared with `openai`. OpenRouter is used only as a price catalog,
+  never as an upstream.
+- **Large request bodies are stored server-side for up to 24 hours.** Bodies
+  above `OPENZOO_CONTEXT_MIN_CHARS` (default 16384 chars) are bound into the
+  zoo's leCore memory under your wallet-signed namespace and recalled on later
+  calls; that is where the "big body" discount comes from. Stored text is
+  compressed and integrity-signed but **not encrypted at rest**. A context is
+  deleted from disk 24 h after its last use (every recall refreshes the clock),
+  or immediately when you run `npx openzoo contexts --forget <hash|all>`, which
+  sends a wallet-signed `DELETE /v1/contexts/:id` and only the wallet that
+  bound the context can erase it. Set `OPENZOO_NO_CONTEXT_CACHE=1` to never
+  bind bodies (you then pay full price for every call).
+- **Small bodies are not stored** beyond the request; the gateway logs
+  route/price/latency metadata per call, not prompt content.
 - **Caller headers are forwarded upstream**, including `x-session-id`.
 - **Payments are on public ledgers.** Each call settles as a Solana/Base
   transfer from your burner wallet, so call timing and spend are public even
@@ -86,9 +92,13 @@ discount comes from remembering your data. Concretely:
 - **Locally**, the proxy keeps `~/.openzoo/wallet.json` (your keys) and
   `~/.openzoo/contexts.json` (corpus hashes → context ids), both chmod 600.
 
+Roadmap, not shipped: client-side encryption of spilled bodies with a
+wallet-derived key (the gateway would still see plaintext in flight to the
+door, so the honesty gain over the TTL + forget above is small).
+
 Treat `openzoo` like any other hosted inference vendor with memory enabled:
-fine for benchmarks and public repos, not for code you cannot send to a third
-party.
+fine for benchmarks and public repos, think before sending code you cannot
+hand to a third party.
 
 Run `unreal-agent-runner -h` for options and the JSON request fields.
 

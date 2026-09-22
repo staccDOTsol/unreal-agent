@@ -70,10 +70,11 @@ Two independent levers to A/B against a direct run of the same tasks:
    for every tool call.
 
 Data retention: every task prompt, tool output and completion transits the zoo's
-gateway before OpenRouter and the provider, and bodies over ~16 KB are stored in
-the zoo's server-side memory with no published retention window (`--forget` only
-clears the local manifest). Terminal-Bench tasks are public, so this is fine for
-the benchmark; see the runner README before using it on private code.
+gateway and the x402 door it picks before reaching the provider (OpenRouter is a
+price list, not an upstream). Bodies over ~16 KB are stored in the zoo's
+server-side memory for ≤24 h after last use, or until `npx openzoo contexts
+--forget` erases them. Terminal-Bench tasks are public, so this is fine for the
+benchmark; see the runner README before using it on private code.
 
 For Terminal-Bench 4.0 on Modal, configure Modal credentials and run:
 
