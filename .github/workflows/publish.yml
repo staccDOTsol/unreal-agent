@@ -14,8 +14,8 @@ concurrency:
 jobs:
   publish:
     if: github.repository == 'staccDOTsol/unreal-agent'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    runs-on: macos-15
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -27,20 +27,56 @@ jobs:
           go-version-file: go.mod
           cache: false
       - run: make test check
+      - name: Import Developer ID
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${MAC_CERT_P12}" ] || [ -z "${MAC_CERT_PASSWORD}" ]; then
+            echo "MAC_CERT_P12 and MAC_CERT_PASSWORD must be set on this repo"
+            exit 1
+          fi
+          cert="$RUNNER_TEMP/developer_id.p12"
+          keychain="$RUNNER_TEMP/build.keychain-db"
+          keychain_pass="$(openssl rand -hex 16)"
+          printf '%s' "$MAC_CERT_P12" | base64 -D > "$cert"
+          curl -fsSL -o "$RUNNER_TEMP/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          security create-keychain -p "$keychain_pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_pass" "$keychain"
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k "$keychain"
+          security import "$cert" -k "$keychain" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_pass" "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security default-keychain -s "$keychain"
+          security find-identity -v -p codesigning
+      - name: Build and sign the macOS runner
+        run: |
+          set -euo pipefail
+          identity="$(security find-identity -v -p codesigning | awk -F '"' '/Developer ID Application/{print $2; exit}')"
+          test -n "$identity"
+          mkdir -p dist
+          version="${GITHUB_SHA::7}"
+          for arch in arm64 amd64; do
+            archive="unreal-agent-runner_${version}_darwin_${arch}"
+            mkdir -p "dist/$archive"
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -mod=readonly -trimpath \
+              -o "dist/$archive/unreal-agent-runner" ./cmd/unreal-agent-runner
+            codesign --force --sign "$identity" --options runtime --timestamp "dist/$archive/unreal-agent-runner"
+            codesign --verify --strict --verbose=2 "dist/$archive/unreal-agent-runner"
+            cp LICENSE "dist/$archive/"
+            tar -czf "dist/$archive.tar.gz" -C "dist/$archive" unreal-agent-runner LICENSE
+          done
+          (cd dist && shasum -a 256 ./*.tar.gz > SHA256SUMS)
       - name: Publish the harness
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           tag="ci-${GITHUB_SHA::7}"
-          gh release create "$tag" \
+          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "harness" \
-            --notes "$(cat <<EOF
-The harness.
-
-Module \`github.com/unreallabsai/unreal-agent\`. Library in \`harness/\`.
-
-This tag is that tree. The source archive is the delivery.
-EOF
-)"
+            --notes "The harness. The macOS runner binaries are Developer ID signed."
