@@ -22,7 +22,6 @@ import (
 	"github.com/unreallabsai/unreal-agent/harness/coordinator"
 	"github.com/unreallabsai/unreal-agent/harness/inbox"
 	"github.com/unreallabsai/unreal-agent/harness/llm"
-	"github.com/unreallabsai/unreal-agent/harness/llm/responsesapi"
 	"github.com/unreallabsai/unreal-agent/harness/operation"
 	"github.com/unreallabsai/unreal-agent/harness/session"
 	"github.com/unreallabsai/unreal-agent/harness/sessionstore"
@@ -59,7 +58,7 @@ type Provider struct {
 	BaseURL           string
 	DefaultModel      string
 	APIKeyEnvironment string // Empty delegates authentication to NewClient.
-	NewClient         func(apiKey, baseURL string, maxAttempts int, getenv func(string) string) (Client, error)
+	NewClient         func(apiKey, baseURL string, maxAttempts *int, getenv func(string) string) (Client, error)
 }
 
 type Request struct {
@@ -446,19 +445,23 @@ func Run(
 	return nil
 }
 
-func resolveMaxAttempts(requested *int, getenv func(string) string) (int, error) {
-	maxAttempts := responsesapi.DefaultMaxAttempts
+// resolveMaxAttempts returns nil when neither the request nor the
+// environment asks for a retry budget, so each provider applies its own
+// default (most use responsesapi.DefaultMaxAttempts; pay-per-call providers
+// wait through funding gaps with a larger one).
+func resolveMaxAttempts(requested *int, getenv func(string) string) (*int, error) {
+	var maxAttempts *int
 	if requested != nil {
-		maxAttempts = *requested
+		maxAttempts = requested
 	} else if value := strings.TrimSpace(getenv(llmMaxAttemptsEnvironment)); value != "" {
 		parsed, err := strconv.Atoi(value)
 		if err != nil {
-			return 0, fmt.Errorf("parse %s: %w", llmMaxAttemptsEnvironment, err)
+			return nil, fmt.Errorf("parse %s: %w", llmMaxAttemptsEnvironment, err)
 		}
-		maxAttempts = parsed
+		maxAttempts = &parsed
 	}
-	if maxAttempts <= 0 {
-		return 0, errors.New("max attempts must be positive")
+	if maxAttempts != nil && *maxAttempts <= 0 {
+		return nil, errors.New("max attempts must be positive")
 	}
 	return maxAttempts, nil
 }

@@ -16,8 +16,8 @@ func DefaultProviders() []Provider {
 		{
 			Name:    "ollama",
 			BaseURL: ollama.BaseURL,
-			NewClient: func(_, baseURL string, maxAttempts int, _ func(string) string) (Client, error) {
-				return ollama.NewClient(ollama.Config{BaseURL: baseURL, MaxAttempts: &maxAttempts})
+			NewClient: func(_, baseURL string, maxAttempts *int, _ func(string) string) (Client, error) {
+				return ollama.NewClient(ollama.Config{BaseURL: baseURL, MaxAttempts: maxAttempts})
 			},
 		},
 		{
@@ -25,19 +25,19 @@ func DefaultProviders() []Provider {
 			BaseURL:           "https://api.openai.com/v1",
 			DefaultModel:      "gpt-6-astra",
 			APIKeyEnvironment: "OPENAI_API_KEY",
-			NewClient: func(apiKey, baseURL string, maxAttempts int, _ func(string) string) (Client, error) {
-				return openai.NewClient(openai.Config{APIKey: apiKey, BaseURL: baseURL, MaxAttempts: &maxAttempts})
+			NewClient: func(apiKey, baseURL string, maxAttempts *int, _ func(string) string) (Client, error) {
+				return openai.NewClient(openai.Config{APIKey: apiKey, BaseURL: baseURL, MaxAttempts: maxAttempts})
 			},
 		},
 		{
 			Name:    "openai-codex",
 			BaseURL: openaicodex.BaseURL,
-			NewClient: func(_, baseURL string, maxAttempts int, getenv func(string) string) (Client, error) {
+			NewClient: func(_, baseURL string, maxAttempts *int, getenv func(string) string) (Client, error) {
 				config, err := openaicodex.EnvironmentConfig(getenv)
 				if err != nil {
 					return nil, err
 				}
-				config.BaseURL, config.MaxAttempts = baseURL, &maxAttempts
+				config.BaseURL, config.MaxAttempts = baseURL, maxAttempts
 				return openaicodex.NewClient(config)
 			},
 		},
@@ -46,8 +46,8 @@ func DefaultProviders() []Provider {
 			Name:              "openrouter",
 			BaseURL:           "https://openrouter.ai/api/v1",
 			APIKeyEnvironment: "OPENROUTER_API_KEY",
-			NewClient: func(apiKey, baseURL string, maxAttempts int, _ func(string) string) (Client, error) {
-				return openrouter.NewClient(openrouter.Config{APIKey: apiKey, BaseURL: baseURL, MaxAttempts: &maxAttempts})
+			NewClient: func(apiKey, baseURL string, maxAttempts *int, _ func(string) string) (Client, error) {
+				return openrouter.NewClient(openrouter.Config{APIKey: apiKey, BaseURL: baseURL, MaxAttempts: maxAttempts})
 			},
 		},
 		{
@@ -57,20 +57,20 @@ func DefaultProviders() []Provider {
 			Name:         "openzoo",
 			BaseURL:      openzoo.BaseURL,
 			DefaultModel: openzoo.DefaultModel,
-			NewClient: func(_, baseURL string, maxAttempts int, getenv func(string) string) (Client, error) {
+			NewClient: func(_, baseURL string, maxAttempts *int, getenv func(string) string) (Client, error) {
 				apiKey := getenv(llmAPIKeyEnvironment)
 				if strings.TrimSpace(apiKey) == "" {
 					apiKey = getenv("OPENZOO_API_KEY")
 				}
-				return openzoo.NewClient(openzoo.Config{APIKey: apiKey, BaseURL: baseURL, MaxAttempts: &maxAttempts})
+				return openzoo.NewClient(openzoo.Config{APIKey: apiKey, BaseURL: baseURL, MaxAttempts: maxAttempts})
 			},
 		},
 		{
 			Name:              "fireworks",
 			BaseURL:           "https://api.fireworks.ai/inference/v1",
 			APIKeyEnvironment: "FIREWORKS_API_KEY",
-			NewClient: func(apiKey, baseURL string, maxAttempts int, _ func(string) string) (Client, error) {
-				return fireworks.NewClient(fireworks.Config{APIKey: apiKey, BaseURL: baseURL, MaxAttempts: &maxAttempts})
+			NewClient: func(apiKey, baseURL string, maxAttempts *int, _ func(string) string) (Client, error) {
+				return fireworks.NewClient(fireworks.Config{APIKey: apiKey, BaseURL: baseURL, MaxAttempts: maxAttempts})
 			},
 		},
 	}

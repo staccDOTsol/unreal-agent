@@ -18,7 +18,7 @@ func TestResolveMaxAttempts(t *testing.T) {
 		want        int
 		wantError   bool
 	}{
-		{name: "default", want: 5},
+		{name: "default"},
 		{name: "environment", environment: " 3 ", want: 3},
 		{name: "environment disables retries", environment: "1", want: 1},
 		{name: "request override", requested: new(2), environment: "3", want: 2},
@@ -33,8 +33,12 @@ func TestResolveMaxAttempts(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := resolveMaxAttempts(test.requested, func(string) string { return test.environment })
-			if (err != nil) != test.wantError || got != test.want {
-				t.Fatalf("max attempts, error = (%d, %v), want (%d, error=%v)", got, err, test.want, test.wantError)
+			want := 0
+			if got != nil {
+				want = *got
+			}
+			if (err != nil) != test.wantError || want != test.want {
+				t.Fatalf("max attempts, error = (%v, %v), want (%d, error=%v)", got, err, test.want, test.wantError)
 			}
 		})
 	}
@@ -45,8 +49,8 @@ func TestRunMainRequestDisablesRetries(t *testing.T) {
 		return llm.Response{ID: "response-1", Stop: llm.StopComplete}, nil
 	}}
 	config := testConfig(client)
-	config.Providers[0].NewClient = func(_, _ string, maxAttempts int, _ func(string) string) (Client, error) {
-		if maxAttempts != 1 {
+	config.Providers[0].NewClient = func(_, _ string, maxAttempts *int, _ func(string) string) (Client, error) {
+		if maxAttempts == nil || *maxAttempts != 1 {
 			return nil, errors.New("request did not disable retries")
 		}
 		return client, nil
