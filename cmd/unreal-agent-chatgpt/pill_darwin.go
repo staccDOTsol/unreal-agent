@@ -53,13 +53,15 @@ func watchPill(ctx context.Context, getenv func(string) string) error {
 			_ = cmd.Process.Kill()
 		}
 	}()
-	codex := filepath.Join(root, "codex")
 	var misses int
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	write := func() {
-		text := readPill(codex, time.Now()).line()
-		_ = os.WriteFile(status, []byte(text), 0o644)
+		state := priceSession(filepath.Join(root, "codex"), openRouterCatalog())
+		if len(state.Receipt) > 0 {
+			_ = os.WriteFile(filepath.Join(root, "receipts.jsonl"), state.Receipt, 0o644)
+		}
+		_ = os.WriteFile(status, []byte(state.text()), 0o644)
 	}
 	write()
 	for {
@@ -96,7 +98,7 @@ function run(argv) {
   var app = $.NSApplication.sharedApplication;
   app.setActivationPolicy($.NSApplicationActivationPolicyAccessory);
   var frame = $.NSScreen.mainScreen.visibleFrame;
-  var width = 460, height = 36;
+  var width = 620, height = 56;
   var win = $.NSWindow.alloc.initWithContentRectStyleMaskBackingDefer(
     $.NSMakeRect(frame.origin.x + frame.size.width - width - 20, frame.origin.y + 96, width, height),
     $.NSWindowStyleMaskBorderless, $.NSBackingStoreBuffered, false);
@@ -105,20 +107,29 @@ function run(argv) {
   win.setHasShadow(true);
   win.setMovableByWindowBackground(true);
   win.setBackgroundColor($.NSColor.colorWithCalibratedRedGreenBlueAlpha(0.910, 0.365, 0.110, 0.96));
-  var field = $.NSTextField.alloc.initWithFrame($.NSMakeRect(14, 7, width - 28, 22));
-  field.setStringValue('Time —');
-  field.setBezeled(false);
-  field.setDrawsBackground(false);
-  field.setEditable(false);
-  field.setSelectable(false);
-  field.setTextColor($.NSColor.whiteColor);
-  field.setFont($.NSFont.boldSystemFontOfSize(13));
-  win.contentView.addSubview(field);
+  function label(y, size, bold) {
+    var field = $.NSTextField.alloc.initWithFrame($.NSMakeRect(14, y, width - 28, size + 6));
+    field.setBezeled(false);
+    field.setDrawsBackground(false);
+    field.setEditable(false);
+    field.setSelectable(false);
+    field.setTextColor($.NSColor.whiteColor);
+    field.setFont(bold ? $.NSFont.boldSystemFontOfSize(size) : $.NSFont.systemFontOfSize(size));
+    win.contentView.addSubview(field);
+    return field;
+  }
+  var field = label(28, 13, true);
+  var sub = label(8, 11, false);
+  field.setStringValue('Saved —');
+  sub.setStringValue('…');
   win.orderFrontRegardless;
   var path = argv[0];
   $.NSTimer.scheduledTimerWithTimeIntervalRepeatsBlock(0.5, true, function() {
     var text = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null);
-    if (text) field.setStringValue(text.stringByTrimmingCharactersInSet($.NSCharacterSet.whitespaceAndNewlineCharacterSet));
+    if (!text) return;
+    var parts = String(text.stringByTrimmingCharactersInSet($.NSCharacterSet.whitespaceAndNewlineCharacterSet)).split('\n');
+    field.setStringValue(parts[0] || 'Saved —');
+    sub.setStringValue(parts[1] || '…');
   });
   app.run();
 }

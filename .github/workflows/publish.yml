@@ -228,4 +228,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "ChatGPT" \
-            --notes "Open it and it downloads its own ChatGPT, separate from an existing install. A prompt runs through the harness on your ChatGPT subscription, or on API credits when OPENAI_API_KEY is set. macOS is a signed, notarized disk image. Windows is an installer. Linux is a package."
+            --notes "Open it and it downloads its own ChatGPT, separate from an existing install. The savings pill prices that session at OpenRouter's posted list for whichever model is selected, and says so. A prompt runs through the harness on your ChatGPT subscription, or on API credits when OPENAI_API_KEY is set. macOS is a signed, notarized disk image. Windows is an installer. Linux is a package."
