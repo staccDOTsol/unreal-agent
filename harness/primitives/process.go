@@ -11,8 +11,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 const (
@@ -250,7 +248,7 @@ func (process *ProcessInvocation) signal(
 	}
 	var err error
 	if request.PropagateToChildren {
-		err = syscall.Kill(-process.process.Pid, request.Signal)
+		err = signalProcessGroup(process.process.Pid, request.Signal)
 	} else {
 		err = process.process.Signal(request.Signal)
 	}
@@ -606,7 +604,7 @@ func prepareProcess(request ProcessStartRequest) (*exec.Cmd, processPipes, error
 	command := exec.Command(request.Path, request.Arguments...)
 	command.Dir = request.Directory
 	command.Env = request.Environment
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcessGroup(command)
 	if pipes.stdinRead != nil {
 		command.Stdin = pipes.stdinRead
 	}
@@ -621,57 +619,6 @@ func prepareProcess(request ProcessStartRequest) (*exec.Cmd, processPipes, error
 		command.Stderr = pipes.stderrCapture
 	}
 	return command, pipes, nil
-}
-
-func openProcessCapture(path string, stream string) (*os.File, os.FileInfo, error) {
-	var descriptor int
-	err := retryEINTR(func() error {
-		var openErr error
-		descriptor, openErr = unix.Open(
-			path,
-			unix.O_WRONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC,
-			0,
-		)
-		return openErr
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("open process %s capture %q: %w", stream, path, err)
-	}
-
-	file := os.NewFile(uintptr(descriptor), path)
-	info, err := file.Stat()
-	if err != nil {
-		return nil, nil, errors.Join(
-			fmt.Errorf("inspect process %s capture %q: %w", stream, path, err),
-			closeProcessFile(file),
-		)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, nil, errors.Join(
-			fmt.Errorf("open process %s capture %q: path is not a regular file", stream, path),
-			closeProcessFile(file),
-		)
-	}
-	if err := unix.SetNonblock(descriptor, false); err != nil {
-		return nil, nil, errors.Join(
-			fmt.Errorf("open process %s capture %q: set blocking: %w", stream, path, err),
-			closeProcessFile(file),
-		)
-	}
-	return file, info, nil
-}
-
-func truncateProcessCapture(file *os.File, path string, stream string) error {
-	if file == nil {
-		return nil
-	}
-	if err := retryEINTR(func() error { return unix.Ftruncate(int(file.Fd()), 0) }); err != nil {
-		return errors.Join(
-			fmt.Errorf("truncate process %s capture %q: %w", stream, path, err),
-			closeProcessFile(file),
-		)
-	}
-	return nil
 }
 
 func (pipes processPipes) parent() processParentPipes {
@@ -780,7 +727,7 @@ func terminateProcess(
 }
 
 func signalProcessInvocation(process *os.Process, signal syscall.Signal) error {
-	err := syscall.Kill(-process.Pid, signal)
+	err := signalProcessGroup(process.Pid, signal)
 	err = normalizeProcessGroupSignalError(process.Pid, err)
 	if err == nil {
 		return nil
@@ -819,17 +766,6 @@ func waitForProcessInvocation(
 		<-timer.C
 		delay = min(delay*2, 50*time.Millisecond)
 	}
-}
-
-func processGroupExists(processGroupID int) (bool, error) {
-	err := syscall.Kill(-processGroupID, 0)
-	if err == nil || errors.Is(err, syscall.EPERM) {
-		return true, nil
-	}
-	if errors.Is(err, syscall.ESRCH) {
-		return false, nil
-	}
-	return false, err
 }
 
 func closeProcessFile(file *os.File) error {
@@ -896,43 +832,6 @@ func streamProcessOutput(
 				return nil
 			}
 			return fmt.Errorf("read process %s: %w", processStreamName(output.stream), readErr)
-		}
-	}
-}
-
-func drainProcessOutput(
-	ctx context.Context,
-	request ProcessStartRequest,
-	stream ProcessStream,
-	reader *os.File,
-	offset *int64,
-	events chan<- PrimitiveEvent,
-) error {
-	fileDescriptor := int(reader.Fd())
-	if err := unix.SetNonblock(fileDescriptor, true); err != nil {
-		return fmt.Errorf("drain process %s: set nonblocking: %w", processStreamName(stream), err)
-	}
-
-	buffer := make([]byte, ProcessOutputChunkSize)
-	for {
-		count, readErr := unix.Read(fileDescriptor, buffer)
-		if count > 0 {
-			if !sendProcessOutput(ctx, request, stream, *offset, buffer[:count], events) {
-				return nil
-			}
-			*offset += int64(count)
-		}
-		if errors.Is(readErr, unix.EINTR) {
-			continue
-		}
-		if errors.Is(readErr, unix.EAGAIN) || errors.Is(readErr, unix.EWOULDBLOCK) {
-			return nil
-		}
-		if readErr != nil {
-			return fmt.Errorf("drain process %s: %w", processStreamName(stream), readErr)
-		}
-		if count == 0 {
-			return nil
 		}
 	}
 }
