@@ -127,9 +127,10 @@ function run(argv) {
   $.NSTimer.scheduledTimerWithTimeIntervalRepeatsBlock(0.5, true, function() {
     var text = $.NSString.stringWithContentsOfFileEncodingError(path, $.NSUTF8StringEncoding, null);
     if (!text) return;
-    var parts = String(text.stringByTrimmingCharactersInSet($.NSCharacterSet.whitespaceAndNewlineCharacterSet)).split('\n');
-    field.setStringValue(parts[0] || 'Saved —');
-    sub.setStringValue(parts[1] || '…');
+    var trimmed = text.stringByTrimmingCharactersInSet($.NSCharacterSet.whitespaceAndNewlineCharacterSet);
+    var parts = trimmed.componentsSeparatedByString('\n');
+    field.setStringValue(parts.objectAtIndex(0));
+    sub.setStringValue(parts.count > 1 ? parts.objectAtIndex(1) : '…');
   });
   app.run();
 }
