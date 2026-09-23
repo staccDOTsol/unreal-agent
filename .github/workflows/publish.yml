@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  linux-windows:
+  linux:
     if: github.repository == 'staccDOTsol/unreal-agent'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -25,29 +25,70 @@ jobs:
           go-version-file: go.mod
           cache: false
       - run: make test check
-      - name: Build Linux and Windows archives
+      - name: Build Linux harness packages
         run: |
           set -euo pipefail
           version="${GITHUB_SHA::7}"
           mkdir -p dist
-          for target_os in linux windows; do
-            for target_arch in amd64 arm64; do
-              archive="unreal-agent-runner_${version}_${target_os}_${target_arch}"
-              mkdir -p "dist/$archive"
-              bin="unreal-agent-runner"
-              if [ "$target_os" = windows ]; then
-                bin="unreal-agent-runner.exe"
-              fi
-              CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go build -mod=readonly -trimpath \
-                -o "dist/$archive/$bin" ./cmd/unreal-agent-runner
-              cp LICENSE "dist/$archive/"
-              tar -czf "dist/$archive.tar.gz" -C "dist/$archive" "$bin" LICENSE
-            done
+          for target_arch in amd64 arm64; do
+            stage="$RUNNER_TEMP/deb-$target_arch"
+            rm -rf "$stage"
+            mkdir -p "$stage/DEBIAN" "$stage/usr/bin"
+            CGO_ENABLED=0 GOOS=linux GOARCH="$target_arch" go build -mod=readonly -trimpath \
+              -o "$stage/usr/bin/unreal-agent++" ./cmd/unreal-agent-runner
+            chmod 755 "$stage/usr/bin/unreal-agent++"
+            printf '%s\n' \
+              "Package: unreal-agent" \
+              "Version: 1.0.0+${version}" \
+              "Section: utils" \
+              "Priority: optional" \
+              "Architecture: ${target_arch}" \
+              "Maintainer: stacc" \
+              "Description: unreal-agent++ harness" \
+              > "$stage/DEBIAN/control"
+            dpkg-deb --root-owner-group --build "$stage" "dist/unreal-agent-plus_${version}_linux_${target_arch}.deb"
           done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: linux-windows
-          path: dist/*.tar.gz
+          name: linux-debs
+          path: dist/*.deb
+          if-no-files-found: error
+
+  windows:
+    if: github.repository == 'staccDOTsol/unreal-agent'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build Windows harness installers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          $version = "${{ github.sha }}".Substring(0, 7)
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $is = Join-Path $env:RUNNER_TEMP "innosetup.exe"
+          Invoke-WebRequest -Uri "https://github.com/jrsoftware/issrc/releases/download/is-6_4_1/innosetup-6.4.1.exe" -OutFile $is
+          Start-Process $is -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          foreach ($arch in @("amd64", "arm64")) {
+            $env:CGO_ENABLED = "0"
+            $env:GOOS = "windows"
+            $env:GOARCH = $arch
+            go build -mod=readonly -trimpath -o packaging\windows\unreal-agent-runner.exe .\cmd\unreal-agent-runner
+            & $iscc "/DVersion=$version" "/DArch=$arch" packaging\windows\unreal-agent.iss
+            if (-not (Test-Path "dist\unreal-agent-plus_${version}_windows_${arch}.exe")) { exit 1 }
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows-installers
+          path: dist/*.exe
           if-no-files-found: error
 
   darwin:
@@ -86,7 +127,7 @@ jobs:
           security list-keychains -d user -s "$keychain"
           security default-keychain -s "$keychain"
           security find-identity -v -p codesigning
-      - name: Build, sign, and notarize macOS
+      - name: Build, sign, and notarize the macOS harness
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -100,33 +141,62 @@ jobs:
           identity="$(security find-identity -v -p codesigning | awk -F '"' '/Developer ID Application/{print $2; exit}')"
           test -n "$identity"
           version="${GITHUB_SHA::7}"
-          mkdir -p dist "$RUNNER_TEMP/notarize"
-          for target_arch in arm64 amd64; do
-            archive="unreal-agent-runner_${version}_darwin_${target_arch}"
-            mkdir -p "dist/$archive"
-            CGO_ENABLED=0 GOOS=darwin GOARCH="$target_arch" go build -mod=readonly -trimpath \
-              -o "dist/$archive/unreal-agent-runner" ./cmd/unreal-agent-runner
-            codesign --force --sign "$identity" --options runtime --timestamp "dist/$archive/unreal-agent-runner"
-            codesign --verify --strict --verbose=2 "dist/$archive/unreal-agent-runner"
-            cp LICENSE "dist/$archive/"
-            cp "dist/$archive/unreal-agent-runner" "$RUNNER_TEMP/notarize/unreal-agent-runner_${target_arch}"
-            tar -czf "dist/$archive.tar.gz" -C "dist/$archive" unreal-agent-runner LICENSE
+          mkdir -p "$RUNNER_TEMP/bins" dist
+          for arch in arm64 amd64; do
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -mod=readonly -trimpath \
+              -o "$RUNNER_TEMP/bins/harness_$arch" ./cmd/unreal-agent-runner
           done
-          ditto -c -k --keepParent "$RUNNER_TEMP/notarize" "$RUNNER_TEMP/notarize.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+          lipo -create "$RUNNER_TEMP/bins/harness_arm64" "$RUNNER_TEMP/bins/harness_amd64" \
+            -output "$RUNNER_TEMP/bins/harness"
+          app="$RUNNER_TEMP/dmg/unreal-agent++.app"
+          mkdir -p "$app/Contents/MacOS"
+          cp "$RUNNER_TEMP/bins/harness" "$app/Contents/MacOS/unreal-agent++"
+          chmod 755 "$app/Contents/MacOS/unreal-agent++"
+          cat > "$app/Contents/Info.plist" <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>unreal-agent++</string>
+            <key>CFBundleIdentifier</key>
+            <string>fun.openzoo.unreal-agent</string>
+            <key>CFBundleName</key>
+            <string>unreal-agent++</string>
+            <key>CFBundleDisplayName</key>
+            <string>unreal-agent++</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0.0</string>
+            <key>CFBundleVersion</key>
+            <string>1.0.0</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>12.0</string>
+          </dict>
+          </plist>
+          EOF
+          codesign --force --sign "$identity" --options runtime --timestamp \
+            --identifier "fun.openzoo.unreal-agent" "$app"
+          codesign --verify --strict --verbose=2 "$app"
+          dmg="dist/unreal-agent-plus_${version}_mac.dmg"
+          hdiutil create -volname "unreal-agent++" -srcfolder "$RUNNER_TEMP/dmg" -ov -format UDZO "$dmg"
+          codesign --force --sign "$identity" --timestamp "$dmg"
+          xcrun notarytool submit "$dmg" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait
+          xcrun stapler staple "$dmg"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: darwin
-          path: dist/*.tar.gz
+          name: mac-dmg
+          path: dist/*.dmg
           if-no-files-found: error
 
   publish:
     if: github.repository == 'staccDOTsol/unreal-agent'
-    needs: [linux-windows, darwin]
+    needs: [linux, windows, darwin]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -136,15 +206,16 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Publish the release
+      - name: Publish the harness installers
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tag="ci-${GITHUB_SHA::7}"
-          (cd dist && sha256sum ./*.tar.gz > SHA256SUMS)
-          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS \
+          find dist -name 'unreal-agent-runner*' -delete
+          (cd dist && sha256sum ./*.dmg ./*.exe ./*.deb > SHA256SUMS)
+          gh release create "$tag" dist/*.dmg dist/*.exe dist/*.deb dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "harness" \
-            --notes "Windows, Linux, and macOS. The macOS binaries are Developer ID signed and notarized."
+            --notes "The harness. macOS is a signed, notarized disk image. Windows is an installer. Linux is a package."
