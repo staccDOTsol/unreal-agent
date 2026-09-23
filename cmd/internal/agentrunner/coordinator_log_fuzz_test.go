@@ -102,8 +102,8 @@ func FuzzCoordinatorLogMatchesExecution(f *testing.F) {
 							delivered = append(delivered, message.Text)
 						}
 					}
-					if !reflect.DeepEqual(delivered, messages) {
-						t.Fatal("model request lost, changed, or duplicated submitted messages")
+					if !modelRequestKeepsSubmittedMessages(delivered, messages) {
+						t.Fatal("model request changed or duplicated submitted messages, or dropped the latest one")
 					}
 					return call
 				case err := <-done:
@@ -236,6 +236,36 @@ func (model *gatedLogModel) Respond(ctx context.Context, request llm.Request, _ 
 	case <-ctx.Done():
 		return llm.Response{}, ctx.Err()
 	}
+}
+
+// modelRequestKeepsSubmittedMessages is the model-request half of the log
+// invariant. Local recall may leave earlier user messages out of the request.
+// What it does send has to be those messages, in order, with the text
+// unchanged, and the latest submitted message has to still be there. The
+// session log is checked separately and still has every input.
+func modelRequestKeepsSubmittedMessages(delivered, submitted []string) bool {
+	if len(submitted) == 0 {
+		return len(delivered) == 0
+	}
+	if len(delivered) == 0 || delivered[len(delivered)-1] != submitted[len(submitted)-1] {
+		return false
+	}
+	at := 0
+	for _, text := range delivered {
+		found := false
+		for at < len(submitted) {
+			match := submitted[at] == text
+			at++
+			if match {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func assertCoordinatorExecutionLog(t *testing.T, items []sessionstore.Item, submitted []inbox.Input, requests int, returned map[int]llm.Response) {
