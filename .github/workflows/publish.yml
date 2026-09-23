@@ -69,6 +69,31 @@ jobs:
             tar -czf "dist/$archive.tar.gz" -C "dist/$archive" unreal-agent-runner LICENSE
           done
           (cd dist && shasum -a 256 ./*.tar.gz > SHA256SUMS)
+      - name: Notarize
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APPLE_ID}" ] || [ -z "${APPLE_APP_SPECIFIC_PASSWORD}" ] || [ -z "${APPLE_TEAM_ID}" ]; then
+            echo "APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID must be set on this repo"
+            exit 1
+          fi
+          stage="$RUNNER_TEMP/notarize"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          find dist -type f -name unreal-agent-runner -print0 | while IFS= read -r -d '' bin; do
+            arch="$(basename "$(dirname "$bin")")"
+            mkdir -p "$stage/$arch"
+            cp "$bin" "$stage/$arch/unreal-agent-runner"
+          done
+          ditto -c -k --keepParent "$stage" "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
       - name: Publish the harness
         env:
           GH_TOKEN: ${{ github.token }}
@@ -79,4 +104,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "harness" \
-            --notes "The harness. The macOS runner binaries are Developer ID signed."
+            --notes "The harness. The macOS runner binaries are Developer ID signed and notarized."
