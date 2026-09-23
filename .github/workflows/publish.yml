@@ -12,12 +12,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
+  mac:
     if: github.repository == 'staccDOTsol/unreal-agent'
     runs-on: macos-15
     timeout-minutes: 30
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -51,25 +49,7 @@ jobs:
           security list-keychains -d user -s "$keychain"
           security default-keychain -s "$keychain"
           security find-identity -v -p codesigning
-      - name: Build and sign the macOS runner
-        run: |
-          set -euo pipefail
-          identity="$(security find-identity -v -p codesigning | awk -F '"' '/Developer ID Application/{print $2; exit}')"
-          test -n "$identity"
-          mkdir -p dist
-          version="${GITHUB_SHA::7}"
-          for arch in arm64 amd64; do
-            archive="unreal-agent-runner_${version}_darwin_${arch}"
-            mkdir -p "dist/$archive"
-            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -mod=readonly -trimpath \
-              -o "dist/$archive/unreal-agent-runner" ./cmd/unreal-agent-runner
-            codesign --force --sign "$identity" --options runtime --timestamp "dist/$archive/unreal-agent-runner"
-            codesign --verify --strict --verbose=2 "dist/$archive/unreal-agent-runner"
-            cp LICENSE "dist/$archive/"
-            tar -czf "dist/$archive.tar.gz" -C "dist/$archive" unreal-agent-runner LICENSE
-          done
-          (cd dist && shasum -a 256 ./*.tar.gz > SHA256SUMS)
-      - name: Notarize
+      - name: Build, sign, and notarize the macOS disk image
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
@@ -80,28 +60,91 @@ jobs:
             echo "APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, and APPLE_TEAM_ID must be set on this repo"
             exit 1
           fi
-          stage="$RUNNER_TEMP/notarize"
-          rm -rf "$stage"
-          mkdir -p "$stage"
-          find dist -type f -name unreal-agent-runner -print0 | while IFS= read -r -d '' bin; do
-            arch="$(basename "$(dirname "$bin")")"
-            mkdir -p "$stage/$arch"
-            cp "$bin" "$stage/$arch/unreal-agent-runner"
+          identity="$(security find-identity -v -p codesigning | awk -F '"' '/Developer ID Application/{print $2; exit}')"
+          test -n "$identity"
+          version="${GITHUB_SHA::7}"
+          mkdir -p dist "$RUNNER_TEMP/bins"
+          for arch in arm64 amd64; do
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -mod=readonly -trimpath \
+              -o "$RUNNER_TEMP/bins/unreal-agent-runner_$arch" ./cmd/unreal-agent-runner
           done
-          ditto -c -k --keepParent "$stage" "$RUNNER_TEMP/notarize.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" \
+          lipo -create "$RUNNER_TEMP/bins/unreal-agent-runner_arm64" "$RUNNER_TEMP/bins/unreal-agent-runner_amd64" \
+            -output "$RUNNER_TEMP/bins/unreal-agent-runner"
+          codesign --force --sign "$identity" --options runtime --timestamp "$RUNNER_TEMP/bins/unreal-agent-runner"
+          codesign --verify --strict --verbose=2 "$RUNNER_TEMP/bins/unreal-agent-runner"
+          root="$RUNNER_TEMP/installer"
+          rm -rf "$root"
+          mkdir -p "$root"
+          cp "$RUNNER_TEMP/bins/unreal-agent-runner" LICENSE "$root/"
+          dmg="dist/unreal-agent-plus_${version}.dmg"
+          hdiutil create -volname "unreal-agent++" -srcfolder "$root" -ov -format UDZO "$dmg"
+          codesign --force --sign "$identity" --timestamp "$dmg"
+          xcrun notarytool submit "$dmg" \
             --apple-id "$APPLE_ID" \
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait
-      - name: Publish the harness
+          xcrun stapler staple "$dmg"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: mac-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  windows:
+    if: github.repository == 'staccDOTsol/unreal-agent'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build the Windows installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ github.sha }}".Substring(0, 7)
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $env:CGO_ENABLED = "0"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          go build -mod=readonly -trimpath -o packaging\windows\unreal-agent-runner.exe .\cmd\unreal-agent-runner
+          $is = Join-Path $env:RUNNER_TEMP "innosetup.exe"
+          Invoke-WebRequest -Uri "https://github.com/jrsoftware/issrc/releases/download/is-6_4_1/innosetup-6.4.1.exe" -OutFile $is
+          Start-Process $is -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/SP-" -Wait
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DVersion=$version" packaging\windows\unreal-agent.iss
+          if (-not (Test-Path "dist\unreal-agent-plus_${version}_windows_amd64.exe")) { exit 1 }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: win-setup
+          path: dist/*.exe
+          if-no-files-found: error
+
+  publish:
+    if: github.repository == 'staccDOTsol/unreal-agent'
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish the installers
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           tag="ci-${GITHUB_SHA::7}"
-          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS \
+          (cd dist && sha256sum ./*.dmg ./*.exe > SHA256SUMS)
+          gh release create "$tag" dist/*.dmg dist/*.exe dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "harness" \
-            --notes "The harness. The macOS runner binaries are Developer ID signed and notarized."
+            --notes "The harness. macOS is a signed, notarized disk image. Windows is an installer."
