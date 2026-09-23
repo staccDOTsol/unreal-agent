@@ -1,0 +1,81 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'staccDOTsol/unreal-agent'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: make test check
+      - name: Build runner clients
+        env:
+          CGO_ENABLED: "0"
+        shell: bash
+        run: |
+          mkdir -p dist
+          version="${GITHUB_SHA::7}"
+          for target_os in linux darwin; do
+            for target_arch in amd64 arm64; do
+              archive="unreal-agent-runner_${version}_${target_os}_${target_arch}"
+              mkdir -p "dist/$archive"
+              GOOS="$target_os" GOARCH="$target_arch" go build -mod=readonly -trimpath \
+                -o "dist/$archive/unreal-agent-runner" ./cmd/unreal-agent-runner
+              cp LICENSE "dist/$archive/"
+              tar -czf "dist/$archive.tar.gz" -C "dist/$archive" unreal-agent-runner LICENSE
+            done
+          done
+          (cd dist && sha256sum ./*.tar.gz > SHA256SUMS)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: build
+    if: github.repository == 'staccDOTsol/unreal-agent'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release
+          path: dist
+      - name: Verify checksums
+        working-directory: dist
+        run: sha256sum --check SHA256SUMS
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="ci-${GITHUB_SHA::7}"
+          gh release create "$tag" dist/*.tar.gz dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$tag" \
+            --notes "Runner clients for ${GITHUB_SHA}. SHA256SUMS signs the archives. Apple Developer ID signing needs a certificate secret; this repo does not have one."

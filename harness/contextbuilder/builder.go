@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/unreallabsai/unreal-agent/harness/inbox"
 	"github.com/unreallabsai/unreal-agent/harness/llm"
@@ -26,6 +27,13 @@ type builder struct {
 	systemPrompt    string
 	committedPrefix []llm.Item
 	stagedSuffix    []llm.Item
+
+	// bound is filled off the caller goroutine. The turn that just received a
+	// read does not wait for it.
+	mu    sync.Mutex
+	binds sync.WaitGroup
+	seen  map[string]string
+	bound map[string]boundChunk
 }
 
 var _ Builder = (*builder)(nil)
@@ -120,6 +128,9 @@ func (current *builder) AddToolResult(
 		Type: llm.ItemToolResult,
 		Data: llm.ToolResult{CallID: callID, Output: payload},
 	})
+	if !running {
+		current.scheduleBind(callID, payload)
+	}
 }
 
 func (current *builder) Commit() {
@@ -131,7 +142,9 @@ func (current *builder) Build() (Result, error) {
 	request := current.request
 	input := make([]llm.Item, 0, len(current.committedPrefix)+len(current.stagedSuffix))
 	input = append(input, current.committedPrefix...)
-	request.Input = append(input, current.stagedSuffix...)
+	input = append(input, current.stagedSuffix...)
+	recalled, report := recallLocal(input, len(current.committedPrefix))
+	request.Input = recalled
 	request.Tools = append([]llm.Tool(nil), request.Tools...)
-	return Result{Request: request}, nil
+	return Result{Request: request, Report: report}, nil
 }
