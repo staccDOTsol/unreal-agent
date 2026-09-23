@@ -26,14 +26,25 @@ func run(args []string, getenv func(string) string, setenv func(string, string) 
 		fmt.Fprintf(stderr, "unreal-agent++: %v\n", err)
 		return 1
 	}
+	if len(args) == 1 && args[0] == "--pill" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		if err := watchPill(ctx, getenv); err != nil {
+			fmt.Fprintf(stderr, "unreal-agent++: %v\n", err)
+			return 1
+		}
+		return 0
+	}
 	if launch {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
-		if err := ensureChatGPT(ctx, localSystem(getenv)); err != nil {
+		sys := localSystem(getenv)
+		if err := ensureChatGPT(ctx, sys); err != nil {
 			fmt.Fprintf(stderr, "unreal-agent++: %v\n", err)
 			notifyError(err)
 			return 1
 		}
+		startPill(sys)
 		return 0
 	}
 	if err := configureBill(mode, getenv, setenv, fileExists); err != nil {
