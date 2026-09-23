@@ -23,6 +23,7 @@ type system struct {
 	run                func(context.Context, []string, string, ...string) (string, error)
 	download           func(context.Context, string, string) error
 	start              func(string, ...string) error
+	startEnv           func([]string, string, ...string) error
 	note               func(string)
 }
 
@@ -33,8 +34,19 @@ func localSystem(getenv func(string) string) system {
 	}
 	return system{
 		goos: runtime.GOOS, goarch: runtime.GOARCH, home: home, getenv: getenv,
-		stat: os.Stat, run: execRun, download: httpDownload, start: startDetached,
+		stat: os.Stat, run: execRun, download: httpDownload, start: startDetached, startEnv: startDetachedEnv,
 		note: func(message string) { notify(message) },
+	}
+}
+
+func supportDir(home, goos string) string {
+	switch goos {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", "unreal-agent++")
+	case "windows":
+		return filepath.Join(home, "AppData", "Local", "unreal-agent++")
+	default:
+		return filepath.Join(home, ".local", "share", "unreal-agent++")
 	}
 }
 
@@ -102,56 +114,33 @@ func findChatGPT(sys system) (bin, app string) {
 }
 
 func candidates(sys system) []string {
-	var out []string
-	if bin := strings.TrimSpace(sys.getenv("OPENZOO_CHATGPT_BIN")); bin != "" {
-		out = append(out, bin)
-	}
+	root := supportDir(sys.home, sys.goos)
 	switch sys.goos {
 	case "darwin":
-		out = append(out,
-			"/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
-			filepath.Join(sys.home, "Applications", "ChatGPT.app", "Contents", "MacOS", "ChatGPT"),
-		)
+		return []string{filepath.Join(root, "ChatGPT.app", "Contents", "MacOS", "ChatGPT")}
 	case "windows":
-		local := strings.TrimSpace(sys.getenv("LOCALAPPDATA"))
-		if local == "" {
-			local = filepath.Join(sys.home, "AppData", "Local")
-		}
-		out = append(out, filepath.Join(local, "Programs", "ChatGPT", "ChatGPT.exe"))
+		return []string{filepath.Join(root, "ChatGPT", "ChatGPT.exe")}
 	default:
-		out = append(out,
-			"/usr/lib/chatgpt/ChatGPT",
-			"/opt/ChatGPT/chatgpt",
-			filepath.Join(sys.home, ".openzoo", "apps", "chatgpt", "usr", "lib", "chatgpt", "ChatGPT"),
-			filepath.Join(sys.home, "apps", "chatgpt", "usr", "lib", "chatgpt", "ChatGPT"),
-		)
+		return []string{filepath.Join(root, "usr", "lib", "chatgpt", "ChatGPT")}
 	}
-	sep := ":"
-	name := "chatgpt"
-	if sys.goos == "windows" {
-		sep, name = ";", "chatgpt.exe"
-	}
-	for _, dir := range strings.Split(sys.getenv("PATH"), sep) {
-		if dir != "" {
-			out = append(out, filepath.Join(dir, name))
-		}
-	}
-	return out
 }
 
-func openChatGPT(sys system, bin, app string) error {
-	if sys.goos == "darwin" {
-		target := app
-		if target == "" {
-			target = bin
-		}
-		_, err := sys.run(context.Background(), nil, "open", "-n", target)
-		return err
-	}
-	if sys.start == nil {
+func openChatGPT(sys system, bin, _ string) error {
+	if sys.startEnv == nil {
 		return errors.New("no process starter")
 	}
-	return sys.start(bin)
+	root := supportDir(sys.home, sys.goos)
+	data := filepath.Join(root, "desktop")
+	codex := filepath.Join(root, "codex")
+	if err := os.MkdirAll(data, 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(codex, 0o755); err != nil {
+		return err
+	}
+	// Launch the private binary. LaunchServices would hand the same bundle id back to /Applications/ChatGPT.app.
+	env := append(os.Environ(), "CODEX_HOME="+codex, "CODEX_ELECTRON_USER_DATA_PATH="+data)
+	return sys.startEnv(env, bin, "--user-data-dir="+data)
 }
 
 func installChatGPT(ctx context.Context, sys system) (string, error) {
@@ -197,7 +186,7 @@ func installDarwin(ctx context.Context, sys system) (string, error) {
 	if _, err := sys.stat(filepath.Join(source, "Contents", "Resources", "codex")); err != nil {
 		return "", errors.New("installer contains ChatGPT Classic, not the Codex desktop app")
 	}
-	applications := filepath.Join(sys.home, "Applications")
+	applications := supportDir(sys.home, "darwin")
 	if err := os.MkdirAll(applications, 0o755); err != nil {
 		return "", err
 	}
@@ -284,7 +273,7 @@ func installLinux(ctx context.Context, sys system) (string, error) {
 	if err := sys.download(ctx, url, deb); err != nil {
 		return "", err
 	}
-	dest := filepath.Join(sys.home, ".openzoo", "apps", "chatgpt")
+	dest := supportDir(sys.home, "linux")
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return "", err
 	}

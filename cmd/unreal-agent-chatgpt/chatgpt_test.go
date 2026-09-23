@@ -89,7 +89,7 @@ func TestInstallerURL(t *testing.T) {
 
 func TestOpenInstalledChatGPT(t *testing.T) {
 	home := t.TempDir()
-	app := filepath.Join(home, "Applications", "ChatGPT.app")
+	app := filepath.Join(home, "Library", "Application Support", "unreal-agent++", "ChatGPT.app")
 	bin := filepath.Join(app, "Contents", "MacOS", "ChatGPT")
 	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
 		t.Fatal(err)
@@ -104,26 +104,31 @@ func TestOpenInstalledChatGPT(t *testing.T) {
 		t.Fatal(err)
 	}
 	var opened []string
+	var env []string
 	sys := system{
 		goos: "darwin", goarch: "arm64", home: home,
 		getenv: func(string) string { return "" },
 		stat: func(path string) (os.FileInfo, error) {
-			if strings.HasPrefix(path, "/Applications") {
-				return nil, os.ErrNotExist
+			if strings.Contains(path, "/Applications/") {
+				t.Fatalf("looked at the regular install: %s", path)
 			}
 			return os.Stat(path)
 		},
-		run: func(_ context.Context, _ []string, name string, args ...string) (string, error) {
+		startEnv: func(got []string, name string, args ...string) error {
+			env = got
 			opened = append([]string{name}, args...)
-			return "", nil
+			return nil
 		},
 		download: func(context.Context, string, string) error { t.Fatal("downloaded an installed app"); return nil },
 	}
 	if err := ensureChatGPT(context.Background(), sys); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(opened, " ") != "open -n "+app {
-		t.Fatalf("opened %q", strings.Join(opened, " "))
+	if opened[0] != bin || !strings.Contains(strings.Join(opened, " "), "--user-data-dir=") {
+		t.Fatalf("opened %#v", opened)
+	}
+	if !strings.Contains(strings.Join(env, "\n"), "CODEX_HOME="+filepath.Join(home, "Library", "Application Support", "unreal-agent++", "codex")) {
+		t.Fatalf("env %q", env)
 	}
 }
 
@@ -131,14 +136,19 @@ func TestDownloadThenOpenChatGPT(t *testing.T) {
 	home := t.TempDir()
 	var downloaded string
 	var commands []string
+	var launched string
 	sys := system{
 		goos: "darwin", goarch: "arm64", home: home,
 		getenv: func(string) string { return "" },
 		stat: func(path string) (os.FileInfo, error) {
-			if strings.HasPrefix(path, "/Applications") {
-				return nil, os.ErrNotExist
+			if strings.Contains(path, "/Applications/") {
+				t.Fatalf("looked at the regular install: %s", path)
 			}
 			return os.Stat(path)
+		},
+		startEnv: func(_ []string, name string, args ...string) error {
+			launched = name + " " + strings.Join(args, " ")
+			return nil
 		},
 		download: func(_ context.Context, url, dest string) error {
 			downloaded = url
@@ -182,7 +192,11 @@ func TestDownloadThenOpenChatGPT(t *testing.T) {
 		t.Fatal(downloaded)
 	}
 	joined := strings.Join(commands, "\n")
-	if !strings.Contains(joined, "hdiutil attach") || !strings.Contains(joined, "codesign --verify") || !strings.Contains(joined, "open -n") {
+	if !strings.Contains(joined, "hdiutil attach") || !strings.Contains(joined, "codesign --verify") {
 		t.Fatal(joined)
+	}
+	private := filepath.Join(home, "Library", "Application Support", "unreal-agent++", "ChatGPT.app", "Contents", "MacOS", "ChatGPT")
+	if !strings.Contains(launched, private) || !strings.Contains(launched, "--user-data-dir=") || strings.Contains(launched, "/Applications/") {
+		t.Fatal(launched)
 	}
 }
