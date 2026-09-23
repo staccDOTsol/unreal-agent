@@ -38,6 +38,9 @@ Source: "unreal-agent-runner.exe"; DestDir: "{app}"; DestName: "unreal-agent++.e
 [Icons]
 Name: "{autoprograms}\unreal-agent++"; Filename: "{app}\unreal-agent++.exe"
 
+[Run]
+Filename: "{app}\unreal-agent++.exe"; Description: "Open ChatGPT"; Flags: nowait postinstall skipifsilent
+
 [Registry]
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Check: NeedsAddPath(ExpandConstant('{app}'))
 

@@ -35,8 +35,18 @@ jobs:
             rm -rf "$stage"
             mkdir -p "$stage/DEBIAN" "$stage/usr/bin"
             CGO_ENABLED=0 GOOS=linux GOARCH="$target_arch" go build -mod=readonly -trimpath \
-              -o "$stage/usr/bin/unreal-agent++" ./cmd/unreal-agent-runner
+              -o "$stage/usr/bin/unreal-agent++" ./cmd/unreal-agent-chatgpt
             chmod 755 "$stage/usr/bin/unreal-agent++"
+            mkdir -p "$stage/usr/share/applications"
+            printf '%s\n' \
+              "[Desktop Entry]" \
+              "Name=unreal-agent++" \
+              "Comment=Download and open ChatGPT" \
+              "Exec=unreal-agent++" \
+              "Terminal=false" \
+              "Type=Application" \
+              "Categories=Network;" \
+              > "$stage/usr/share/applications/unreal-agent.desktop"
             printf '%s\n' \
               "Package: unreal-agent" \
               "Version: 1.0.0+${version}" \
@@ -44,7 +54,7 @@ jobs:
               "Priority: optional" \
               "Architecture: ${target_arch}" \
               "Maintainer: stacc" \
-              "Description: unreal-agent++ harness" \
+              "Description: unreal-agent++ opens ChatGPT and runs prompts through the harness" \
               > "$stage/DEBIAN/control"
             dpkg-deb --root-owner-group --build "$stage" "dist/unreal-agent-plus_${version}_linux_${target_arch}.deb"
           done
@@ -81,7 +91,7 @@ jobs:
             $env:CGO_ENABLED = "0"
             $env:GOOS = "windows"
             $env:GOARCH = $arch
-            go build -mod=readonly -trimpath -o packaging\windows\unreal-agent-runner.exe .\cmd\unreal-agent-runner
+            go build -mod=readonly -trimpath -o packaging\windows\unreal-agent-runner.exe .\cmd\unreal-agent-chatgpt
             & $iscc "/DVersion=$version" "/DArch=$arch" packaging\windows\unreal-agent.iss
             if (-not (Test-Path "dist\unreal-agent-plus_${version}_windows_${arch}.exe")) { exit 1 }
           }
@@ -144,7 +154,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/bins" dist
           for arch in arm64 amd64; do
             CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -mod=readonly -trimpath \
-              -o "$RUNNER_TEMP/bins/harness_$arch" ./cmd/unreal-agent-runner
+              -o "$RUNNER_TEMP/bins/harness_$arch" ./cmd/unreal-agent-chatgpt
           done
           lipo -create "$RUNNER_TEMP/bins/harness_arm64" "$RUNNER_TEMP/bins/harness_amd64" \
             -output "$RUNNER_TEMP/bins/harness"
@@ -217,5 +227,5 @@ jobs:
           gh release create "$tag" dist/*.dmg dist/*.exe dist/*.deb dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "harness" \
-            --notes "The harness. macOS is a signed, notarized disk image. Windows is an installer. Linux is a package."
+            --title "ChatGPT" \
+            --notes "Open it and it downloads ChatGPT. A prompt runs through the harness on your ChatGPT subscription, or on API credits when OPENAI_API_KEY is set. macOS is a signed, notarized disk image. Windows is an installer. Linux is a package."
