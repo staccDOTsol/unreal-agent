@@ -55,6 +55,9 @@ type Config struct {
 	CacheKeyPlacement CacheKeyPlacement
 	// Nil uses DefaultMaxAttempts.
 	MaxAttempts *int
+	// RetryPolicy overrides the backoff and retryable status codes of the
+	// default remote request (MaxAttempts on it is ignored; see MaxAttempts).
+	RetryPolicy *primitives.RemoteRetryPolicy
 	// Trace borrows read-only bodies: request JSON and terminal response JSON or HTTP error.
 	Trace func(Exchange)
 	// Extensions are provider-specific top-level fields merged into every request
@@ -70,6 +73,7 @@ type adapter struct {
 	trace             func(Exchange)
 	cacheKeyPlacement CacheKeyPlacement
 	maxAttempts       int
+	retryPolicy       *primitives.RemoteRetryPolicy
 	extensions        map[string]jsontext.Value
 }
 
@@ -96,6 +100,7 @@ func NewAdapter(remote *primitives.RemoteClient, config Config) (llm.Adapter, er
 		trace:             config.Trace,
 		cacheKeyPlacement: config.CacheKeyPlacement,
 		maxAttempts:       maxAttempts,
+		retryPolicy:       config.RetryPolicy,
 		extensions:        config.Extensions,
 	}, nil
 }
@@ -147,6 +152,9 @@ func (adapter *adapter) remoteRequest(body []byte, cacheKey string) primitives.R
 	}
 	// Reasoning can produce multi-minute gaps between events.
 	request.ResponseIdleTimeout = modelResponseIdleTimeout
+	if adapter.retryPolicy != nil {
+		request.RetryPolicy = *adapter.retryPolicy
+	}
 	request.RetryPolicy.MaxAttempts = 1
 	request.SSE = &primitives.RemoteSSEOptions{
 		MaxFrameSize:   maxSSEFrameBytes,

@@ -11,7 +11,9 @@ package openzoo
 import (
 	"encoding/json/jsontext"
 	"errors"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/unreallabsai/unreal-agent/harness/llm"
 	"github.com/unreallabsai/unreal-agent/harness/llm/responsesapi"
@@ -25,7 +27,30 @@ const (
 	DefaultModel = "openzoo/auto"
 	// PlaceholderAPIKey is the documented dummy bearer; the zoo takes payment, not keys.
 	PlaceholderAPIKey = "sk-openzoo"
+	// DefaultMaxAttempts is sized so a wallet or gateway funding gap is waited
+	// out rather than fatal: 60 attempts at up to 30s apart is ~30 minutes.
+	DefaultMaxAttempts = 60
 )
+
+// fundingRetryPolicy treats "cannot pay right now" as transient. The proxy
+// answers 402 while its own wallet is empty and the gateway answers 503 while
+// its upstream payer is underfunded; both clear as soon as USDC lands, and a
+// task that has run for twenty turns should not be lost to a one-minute gap.
+var fundingRetryPolicy = primitives.RemoteRetryPolicy{
+	InitialBackoff: 5 * time.Second,
+	MaxBackoff:     30 * time.Second,
+	RetryableStatusCodes: []int{
+		http.StatusPaymentRequired,
+		http.StatusRequestTimeout,
+		http.StatusTooEarly,
+		http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusBadGateway,
+		http.StatusServiceUnavailable,
+		http.StatusGatewayTimeout,
+		520, 521, 522, 523, 524, 529,
+	},
+}
 
 type Config struct {
 	APIKey      string // Optional. Defaults to PlaceholderAPIKey.
@@ -53,6 +78,12 @@ func NewClient(config Config) (*Client, error) {
 		return nil, errors.New("OpenZoo base URL must be set")
 	}
 
+	maxAttempts := config.MaxAttempts
+	if maxAttempts == nil {
+		attempts := DefaultMaxAttempts
+		maxAttempts = &attempts
+	}
+	retryPolicy := fundingRetryPolicy
 	remote := primitives.NewRemoteClient()
 	adapter, err := responsesapi.NewAdapter(remote, responsesapi.Config{
 		Endpoint: baseURL + "/responses",
@@ -61,7 +92,8 @@ func NewClient(config Config) (*Client, error) {
 			"Content-Type":  {"application/json"},
 		},
 		Trace:       config.Trace,
-		MaxAttempts: config.MaxAttempts,
+		MaxAttempts: maxAttempts,
+		RetryPolicy: &retryPolicy,
 		// The proxy forwards caller headers to the zoo gateway, which fronts the
 		// same OpenRouter-style upstreams as the openrouter client. Pinning the
 		// session to one warm upstream and opting into a one-hour cache breakpoint
