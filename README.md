@@ -2,6 +2,8 @@
 
 I, staccoverflow, spent an awful lot of time and patience on OpenZoo. It turned out untenable because the peanut gallery is insufferable, and so this is unreal-agent++ ([openzoo.fun](https://openzoo.fun) retained for nostalgia). Most of this tech ain't mine. It's [unreal-agent](https://github.com/unreallabsai/unreal-agent)'s and [anoversizedmoosewithsocks](https://github.com/AnOversizedMooseWithSocks)'s.
 
+It doesn't matter how rich you are. If you use AI, frontier models are 70–80% cheaper, dollar for dollar. It's like 5x as cheap. Or you get 5x the use out of the same dollar.
+
 An async-first agent harness from Unreal Labs.
 
 - [harness/](harness/) — the library.
